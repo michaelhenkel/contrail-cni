@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/michaelhenkel/contrail-cni/logging"
 	"github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/types/current"
+	log "github.com/michaelhenkel/contrail-cni/logging"
 )
 
 // Default VRouter values
@@ -128,18 +128,29 @@ type Result struct {
 	Annotations Annotations
 }
 
+func indexOf(element *current.Interface, data []*current.Interface) int {
+	for k, v := range data {
+		if element == v {
+			return k
+		}
+	}
+	return -1 //not found.
+}
+
 // Convert result from VRouter format to CNI format
 func MakeCniResult(ifname string, vrouterResult *Result) *current.Result {
 	result := &current.Result{}
 
 	intf := &current.Interface{Name: ifname, Mac: vrouterResult.Mac}
 	result.Interfaces = append(result.Interfaces, intf)
+	intIndex := indexOf(intf, result.Interfaces)
 
 	mask := net.CIDRMask(vrouterResult.Plen, 32)
 	ip := &current.IPConfig{
-		Version: "4",
-		Address: net.IPNet{IP: net.ParseIP(vrouterResult.Ip), Mask: mask},
-		Gateway: net.ParseIP(vrouterResult.Gw)}
+		Version:   "4",
+		Interface: &intIndex,
+		Address:   net.IPNet{IP: net.ParseIP(vrouterResult.Ip), Mask: mask},
+		Gateway:   net.ParseIP(vrouterResult.Gw)}
 	result.IPs = append(result.IPs, ip)
 
 	// Set default route only for the primary interface in case of multiple

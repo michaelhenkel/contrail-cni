@@ -91,7 +91,6 @@ func CmdAdd(skelArgs *skel.CmdArgs) error {
 		argKV := strings.Split(arg, "=")
 		argMap[argKV[0]] = argKV[1]
 	}
-	log.Info("argMap %s", argMap)
 	containerName := argMap["K8S_POD_NAME"]
 	log.Info("containerName %s", containerName)
 	uid, err := getPodIDFromKubeAPI(containerName, argMap["K8S_POD_NAMESPACE"])
@@ -129,14 +128,22 @@ func CmdDel(skelArgs *skel.CmdArgs) error {
 
 	log.Infof("Came in Del for container %s", skelArgs.ContainerID)
 	// Get UUID and Name for container
-	containerUuid, containerName, err := getPodInfo(skelArgs)
-	if err != nil {
-		log.Errorf("Error getting UUID/Name for Container")
-		return err
+	argsList := strings.Split(skelArgs.Args, ";")
+	var argMap = make(map[string]string)
+	for _, arg := range argsList {
+		argKV := strings.Split(arg, "=")
+		argMap[argKV[0]] = argKV[1]
 	}
+	containerName := argMap["K8S_POD_NAME"]
+	log.Info("containerName %s", containerName)
+	uid, err := getPodIDFromKubeAPI(containerName, argMap["K8S_POD_NAMESPACE"])
+	if err != nil {
+		log.Error("couldn't get uid from kube %s\n", err)
+	}
+	containerUID := fmt.Sprintf("%s", uid)
 
 	// Update UUID and Name for container
-	cni.Update(containerName, containerUuid, "")
+	cni.Update(containerName, containerUID, "")
 	cni.Log()
 
 	// Handle Del command
@@ -151,30 +158,6 @@ func CmdDel(skelArgs *skel.CmdArgs) error {
 
 // Check command
 func CmdCheck(skelArgs *skel.CmdArgs) error {
-	// Initialize ContrailCni module
-	cni, err := contrailCni.Init(skelArgs)
-	if err != nil {
-		return err
-	}
-
-	log.Infof("Came in Check for container %s", skelArgs.ContainerID)
-	// Get UUID and Name for container
-	containerUuid, containerName, err := getPodInfo(skelArgs)
-	if err != nil {
-		log.Errorf("Error getting UUID/Name for Container")
-		return err
-	}
-
-	// Update UUID and Name for container
-	cni.Update(containerName, containerUuid, "")
-	cni.Log()
-
-	// Handle Del command
-	err = cni.CmdCheck()
-	if err != nil {
-		log.Errorf("Failed processing Check command.")
-		return err
-	}
 
 	return nil
 }

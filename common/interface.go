@@ -12,10 +12,10 @@ import (
 	"fmt"
 	"net"
 
-	log "github.com/michaelhenkel/contrail-cni/logging"
+	"github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/plugins/pkg/ipam"
 	"github.com/containernetworking/plugins/pkg/ns"
-	"github.com/containernetworking/cni/pkg/types/current"
+	log "github.com/michaelhenkel/contrail-cni/logging"
 	"github.com/vishvananda/netlink"
 )
 
@@ -134,6 +134,9 @@ func (intf CniIntf) Configure(mac string, result *current.Result) error {
 		}
 
 		// Configure IPAM attributes
+
+		log.Info("Result: %v\n", result)
+
 		err = ipam.ConfigureIface(intf.containerIfName, result)
 		if err != nil {
 			msg := fmt.Sprintf("Error configuring interface %s with %s. "+
