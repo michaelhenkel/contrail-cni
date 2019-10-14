@@ -8,60 +8,106 @@
 package main
 
 import (
-	"context"
+	"flag"
+	"fmt"
 	"os"
+	"strings"
 
-    "github.com/michaelhenkel/contrail-cni/contrail"
-    "github.com/michaelhenkel/contrail-cni/common"
-	log "github.com/michaelhenkel/contrail-cni/logging"
+	contrailCni "github.com/michaelhenkel/contrail-cni/contrail"
+
+	//"github.com/michaelhenkel/contrail-cni/common"
 	"github.com/containernetworking/cni/pkg/skel"
 	cniSpecVersion "github.com/containernetworking/cni/pkg/version"
-	"github.com/docker/docker/client"
+	log "github.com/michaelhenkel/contrail-cni/logging"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
-// Use "docker inspect" equivalent API to get UUID and Name for container
-func getPodInfo(skelArgs *skel.CmdArgs) (string, string, error) {
-	os.Setenv("DOCKER_API_VERSION", "1.22")
-	cli, err := client.NewEnvClient()
+func getPodIDFromKubeAPI(podName string, podNamespace string) (types.UID, error) {
+	log.Info("getPodIDFromKubeAPI\n")
+	var kubeconfig *string
+	var uid types.UID
+	/*
+		if home := homeDir(); home != "" {
+			kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
+		} else {
+			kubeconfig = flag.String("kubeconfig", "/etc/rancher/k3s/k3s.yaml", "absolute path to the kubeconfig file")
+		}
+	*/
+	kubeconfig = flag.String("kubeconfig", "/etc/rancher/k3s/k3s.yaml", "absolute path to the kubeconfig file")
+	flag.Parse()
+	log.Info("got flags %s\n", kubeconfig)
+	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
-		log.Errorf("Error creating docker client. %+v", err)
-		return "", "", err
+		log.Error("cannot load kube config\n")
+		return uid, err
 	}
-
-	data, err := cli.ContainerInspect(context.Background(),
-		skelArgs.ContainerID)
+	log.Info("got kubeconfig\n")
+	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		log.Errorf("Error querying for container %s. %+v",
-			skelArgs.ContainerID, err)
-		return "", "", err
+		log.Error("cannot create clientset\n")
+		return uid, err
 	}
+	log.Info("got clientset\n")
+	pod, err := clientset.CoreV1().Pods(podNamespace).Get(podName, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		log.Error("Pod %s in namespace %s not found\n", podName, podNamespace)
+		return uid, err
+	} else if err != nil {
+		log.Error("Error getting pod %s in namespace %s\n", podName, podNamespace)
+		return uid, err
+	}
+	log.Info("got pod\n")
 
-	uuid := data.Config.Labels["io.kubernetes.pod.uid"]
-	name := data.Config.Hostname
-	log.Infof("getPodInfo success. container-id %s uuid %s name %s",
-		skelArgs.ContainerID, uuid, name)
-	return uuid, name, nil
+	log.Info("Found pod %s in namespace %s\n", podName, podNamespace)
+
+	uid = pod.GetUID()
+
+	return uid, nil
+}
+
+func homeDir() string {
+	if h := os.Getenv("HOME"); h != "" {
+		return h
+	}
+	return os.Getenv("USERPROFILE") // windows
 }
 
 // Add command
 func CmdAdd(skelArgs *skel.CmdArgs) error {
 	// Initialize ContrailCni module
+
 	cni, err := contrailCni.Init(skelArgs)
 	if err != nil {
 		return err
 	}
 
-	log.Infof("Came in Add for container %s", skelArgs.ContainerID)
-	// Get UUID and Name for container
-	containerUuid, containerName, err := getPodInfo(skelArgs)
+	argsList := strings.Split(skelArgs.Args, ";")
+	var argMap = make(map[string]string)
+	for _, arg := range argsList {
+		argKV := strings.Split(arg, "=")
+		argMap[argKV[0]] = argKV[1]
+	}
+	log.Info("argMap %s", argMap)
+	containerName := argMap["K8S_POD_NAME"]
+	log.Info("containerName %s", containerName)
+	uid, err := getPodIDFromKubeAPI(containerName, argMap["K8S_POD_NAMESPACE"])
+	if err != nil {
+		log.Error("couldn't get uid from kube %s\n", err)
+	}
+	containerUID := fmt.Sprintf("%s", uid)
+	log.Info("UID %s\n", containerUID)
 	if err != nil {
 		log.Errorf("Error getting UUID/Name for Container")
 		return err
 	}
-
-	// Update UUID and Name for container
-	cni.Update(containerName, containerUuid, "")
+	log.Infof("updating cni with uuid %s name %s", containerUID, containerName)
+	cni.Update(containerName, containerUID, "")
 	cni.Log()
+	log.Infof("Came in Add for cni.ContainerUuid %s", cni.ContainerUuid)
 
 	// Handle Add command
 	err = cni.CmdAdd()
@@ -103,7 +149,37 @@ func CmdDel(skelArgs *skel.CmdArgs) error {
 	return nil
 }
 
+// Check command
+func CmdCheck(skelArgs *skel.CmdArgs) error {
+	// Initialize ContrailCni module
+	cni, err := contrailCni.Init(skelArgs)
+	if err != nil {
+		return err
+	}
+
+	log.Infof("Came in Check for container %s", skelArgs.ContainerID)
+	// Get UUID and Name for container
+	containerUuid, containerName, err := getPodInfo(skelArgs)
+	if err != nil {
+		log.Errorf("Error getting UUID/Name for Container")
+		return err
+	}
+
+	// Update UUID and Name for container
+	cni.Update(containerName, containerUuid, "")
+	cni.Log()
+
+	// Handle Del command
+	err = cni.CmdCheck()
+	if err != nil {
+		log.Errorf("Failed processing Check command.")
+		return err
+	}
+
+	return nil
+}
+
 func main() {
 	// Let CNI skeletal code handle demux based on env variables
-	skel.PluginMain(CmdAdd, CmdDel, cniSpecVersion.All)
+	skel.PluginMain(CmdAdd, CmdCheck, CmdDel, cniSpecVersion.All, "contrail")
 }
