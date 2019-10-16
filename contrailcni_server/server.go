@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"net"
 	"strings"
@@ -40,6 +39,7 @@ type server struct {
 
 // Add implements contrailcno.ContrailCNIServer
 func (s *server) Add(ctx context.Context, in *pb.CNIArgs) (*pb.AddResult, error) {
+	fmt.Println("ADD")
 	skelArgs := getSkelArgs(in)
 	addResult := &pb.AddResult{}
 	cni, err := contrailCni.Init(skelArgs)
@@ -78,6 +78,12 @@ func (s *server) Add(ctx context.Context, in *pb.CNIArgs) (*pb.AddResult, error)
 	}
 	addResult = resultToProto(result, cniVersion)
 	return addResult, nil
+}
+
+// SayHello implements helloworld.GreeterServer
+func (s *server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
+	log.Info("Received: %v", in.GetName())
+	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
 }
 
 func resultToProto(result *current.Result, cniVersion string) *pb.AddResult {
@@ -131,6 +137,9 @@ func resultToProto(result *current.Result, cniVersion string) *pb.AddResult {
 }
 
 func main() {
+	fmt.Println("Serving...")
+	log.Init("/var/log/contrail/cni/server.log", 10, 5)
+	log.Info("Started serving")
 	lis, err := net.Listen("tcp", port)
 	if err != nil {
 		log.Error("failed to listen: %v", err)
@@ -144,12 +153,10 @@ func main() {
 
 func getPodIDFromKubeAPI(podName string, podNamespace string) (types.UID, error) {
 	log.Info("getPodIDFromKubeAPI\n")
-	var kubeconfig *string
 	var uid types.UID
-	kubeconfig = flag.String("kubeconfig", "/etc/rancher/k3s/k3s.yaml", "absolute path to the kubeconfig file")
-	flag.Parse()
+	kubeconfig := "/etc/rancher/k3s/k3s.yaml"
 	log.Info("got flags %s\n", kubeconfig)
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		log.Error("cannot load kube config\n")
 		return uid, err
@@ -185,6 +192,6 @@ func getSkelArgs(cniArgs *pb.CNIArgs) *skel.CmdArgs {
 		IfName:      cniArgs.IfName,
 		Args:        cniArgs.Args,
 		Path:        cniArgs.Path,
-		StdinData:   cniArgs.StdinData,
+		StdinData:   []byte(cniArgs.StdinData),
 	}
 }

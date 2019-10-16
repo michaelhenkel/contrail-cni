@@ -23,6 +23,17 @@ service ContrailCNI {
   rpc Add(CNIArgs) returns (AddResult) {}
   rpc Del(CNIArgs) returns (DelResult) {}
   rpc Check(CNIArgs) returns (CheckResult) {}
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+
+// The request message containing the user's name.
+message HelloRequest {
+  string name = 1;
+}
+
+// The response message containing the greetings
+message HelloReply {
+  string message = 1;
 }
 
 // The request message containing the user's name.
@@ -41,7 +52,7 @@ message CNIArgs {
   string IfName = 3;
   string Args = 4;
   string Path = 5;
-  bytes StdinData = 6;
+  string StdinData = 6;
 }
 
 message AddResult {
