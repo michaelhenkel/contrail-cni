@@ -249,11 +249,12 @@ func (cni *ContrailCni) configureContainerInterface(
  *  - Bring-up the interface
  *  - Return result in form of types.Result
  */
-func (cni *ContrailCni) CmdAdd() error {
+func (cni *ContrailCni) CmdAdd() (*current.Result, string, error) {
 
 	// ContainerIntfNames - map of vmi uuid to interface names
 	// Key : vmi uuid
 	// Value : interface name
+	res := &current.Result{}
 	containerIntfNames := make(map[string]string)
 	// vrouterResultMap - map of vmi uuid to Vrouter Result
 	// Key : vmi uuid
@@ -272,7 +273,7 @@ func (cni *ContrailCni) CmdAdd() error {
 		if err != nil {
 			log.Errorf("Error creating http Request. Op %s Url %s Msg %s."+
 				"Error : %+v", op, url, err)
-			return err
+			return res, "", err
 		}
 
 		req.Header.Set("Content-Type", "application/json")
@@ -280,7 +281,7 @@ func (cni *ContrailCni) CmdAdd() error {
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			log.Errorf("Failed HTTP operation :  %+v. Error : %+v", req, err)
-			return err
+			return res, "", err
 		}
 		defer resp.Body.Close()
 
@@ -288,7 +289,7 @@ func (cni *ContrailCni) CmdAdd() error {
 			msg := fmt.Sprintf("Failed HTTP POST operation. Return code %d",
 				int(resp.StatusCode))
 			log.Errorf(msg)
-			return fmt.Errorf(msg)
+			return res, "", fmt.Errorf(msg)
 		}
 		log.Infof("IN CNI MESOS mode - Post to mesos manager success!\n")
 	}
@@ -300,7 +301,7 @@ func (cni *ContrailCni) CmdAdd() error {
 	if err != nil {
 		log.Errorf("Error polling for configuration of %s and %s",
 			cni.ContainerUuid, cni.ContainerVn)
-		return err
+		return res, "", err
 	}
 
 	// For each interface in the result create an interface in the container,
@@ -312,7 +313,7 @@ func (cni *ContrailCni) CmdAdd() error {
 		index, err := strconv.Atoi(indices[0])
 		if err != nil {
 			log.Errorf("Could not retrieve index from result - %+v", result)
-			return err
+			return res, "", err
 		}
 		var containerIntfName string
 		if result.Annotations.Interface != "" {
@@ -353,7 +354,7 @@ func (cni *ContrailCni) CmdAdd() error {
 	vRouterResults, poll_err := cni.VRouter.PollUrl("/vm")
 	if poll_err != nil {
 		log.Errorf("Error in polling VRouter ")
-		return poll_err
+		return res, "", poll_err
 	}
 
 	for _, vRouterResult := range *vRouterResults {
@@ -369,7 +370,7 @@ func (cni *ContrailCni) CmdAdd() error {
 			msg := fmt.Sprintf("VMI UUID %s does not exist in the Vrouter Result",
 				vmiUuid)
 			log.Errorf(msg)
-			return fmt.Errorf(msg)
+			return res, "", fmt.Errorf(msg)
 		}
 
 		log.Infof("Working on VrouterResult - %+v  and Interface name - %s",
@@ -377,7 +378,7 @@ func (cni *ContrailCni) CmdAdd() error {
 		typesResult, err := cni.configureContainerInterface(
 			containerIntfName, vRouterResult)
 		if err != nil {
-			return err
+			return res, "", err
 		}
 
 		if cni.MetaPlugin {
@@ -390,7 +391,7 @@ func (cni *ContrailCni) CmdAdd() error {
 	}
 
 	types.PrintResult(finalTypesResult, CNIVersion)
-	return nil
+	return finalTypesResult, CNIVersion, nil
 }
 
 /****************************************************************************

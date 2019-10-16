@@ -1,0 +1,80 @@
+  
+// Copyright 2015 gRPC authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+
+syntax = "proto3";
+
+package contrailcni;
+
+// The greeting service definition.
+service ContrailCNI {
+  rpc Add(CNIArgs) returns (AddResult) {}
+  rpc Del(CNIArgs) returns (DelResult) {}
+  rpc Check(CNIArgs) returns (CheckResult) {}
+}
+
+// The request message containing the user's name.
+message DelResult {
+  bool result = 1;
+}
+
+// The request message containing the user's name.
+message CheckResult {
+  bool result = 1;
+}
+
+message CNIArgs {
+  string ContainerID = 1;
+  string Netns = 2;
+  string IfName = 3;
+  string Args = 4;
+  string Path = 5;
+  bytes StdinData = 6;
+}
+
+message AddResult {
+  string CNIVersion = 1;
+  repeated Intf Interfaces = 2;
+  repeated IPConfig IPs = 3;
+  repeated Route Routes = 4;
+  DNS DNSs = 5;
+
+}
+
+message Intf {
+  string Name = 1;
+  string Mac = 2;
+  string Sandbox = 3;
+}
+
+message IPConfig {
+  string Version = 1;
+  int32 Intf = 2;
+  string Address = 3;
+  string Gateway = 4;
+}
+
+message Route {
+  string Dst = 1;
+  string GW = 2;
+}
+
+message DNS {
+  repeated string Nameservers = 1;
+  string Domain = 2;
+  repeated string Search = 3;
+  repeated string Options = 4; 
+}
+

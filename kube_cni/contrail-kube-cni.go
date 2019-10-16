@@ -109,7 +109,7 @@ func CmdAdd(skelArgs *skel.CmdArgs) error {
 	log.Infof("Came in Add for cni.ContainerUuid %s", cni.ContainerUuid)
 
 	// Handle Add command
-	err = cni.CmdAdd()
+	_, _, err = cni.CmdAdd()
 	if err != nil {
 		log.Errorf("Failed processing Add command.")
 		return err
@@ -164,5 +164,6 @@ func CmdCheck(skelArgs *skel.CmdArgs) error {
 
 func main() {
 	// Let CNI skeletal code handle demux based on env variables
+
 	skel.PluginMain(CmdAdd, CmdCheck, CmdDel, cniSpecVersion.All, "contrail")
 }
