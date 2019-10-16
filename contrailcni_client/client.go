@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 
 	cniSpecVersion "github.com/containernetworking/cni/pkg/version"
@@ -21,73 +23,53 @@ const (
 )
 
 func main() {
-	//log.Println("Contrail CNI client")
 	log.Init("/var/log/contrail/cni/client.log", 10, 5)
 	skel.PluginMain(CmdAdd, CmdCheck, CmdDel, cniSpecVersion.All, "contrail")
-	//log.Println("Contrail CNI client")
 }
 
 //CmdAdd command calls the Add function
 func CmdAdd(skelArgs *skel.CmdArgs) error {
-	//log.Println("Contrail CNI client")
-	//log.Printf("Calling binary with %v\n", skelArgs)
-	log.Info("skelArgs: %+v\n", skelArgs)
-	log.Info("cniArgs(skelArgs): %+v\n", cniArgs(skelArgs))
-	//c, ctx := newClient()
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
-	if err != nil {
-		log.Error("did not connect: %v", err)
-	}
-	defer conn.Close()
-	c := pb.NewContrailCNIClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	c, ctx, conn, cancel := newClient()
+	defer conn.Close()
 	defer cancel()
 
-	r, err := c.SayHello(ctx, &pb.HelloRequest{Name: "bla"})
-	if err != nil {
-		log.Error("could not greet: %v", err)
-	}
-	log.Info("Greeting: %s", r.GetMessage())
-
 	addResult, err := c.Add(ctx, cniArgs(skelArgs))
-
 	if err != nil {
 		log.Error("could not add: %v", err)
 	}
-	//log.Info("%s", addResult)
-	log.Info("HELLLLO")
-	log.Info("%s", cniResult(addResult))
 	types.PrintResult(cniResult(addResult), addResult.GetCNIVersion())
-
-	//args := getSkelArgs(addResult.)
 
 	return nil
 }
 
 //CmdCheck command calls the Check function
 func CmdCheck(skelArgs *skel.CmdArgs) error {
-	//log.Println("Contrail command check")
+
 	return nil
 }
 
 //CmdDel command calls the Del function
 func CmdDel(skelArgs *skel.CmdArgs) error {
-	//log.Println("Contrail command delete")
+	c, ctx, conn, cancel := newClient()
+	defer conn.Close()
+	defer cancel()
+
+	_, err := c.Del(ctx, cniArgs(skelArgs))
+	if err != nil {
+		log.Error("could not add: %v", err)
+	}
 	return nil
 }
 
-func newClient() (pb.ContrailCNIClient, context.Context) {
+func newClient() (pb.ContrailCNIClient, context.Context, *grpc.ClientConn, context.CancelFunc) {
 	conn, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
 		log.Error("did not connect: %v", err)
 	}
-	defer conn.Close()
 	c := pb.NewContrailCNIClient(conn)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	return c, ctx
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	return c, ctx, conn, cancel
 }
 
 func cniResult(addResult *pb.AddResult) *current.Result {
@@ -105,18 +87,20 @@ func cniResult(addResult *pb.AddResult) *current.Result {
 	var IPList []*current.IPConfig
 	for _, ip := range addResult.IPs {
 		intf := int(ip.GetIntf())
-		_, address, err := net.ParseCIDR(ip.GetAddress())
+		addressSlice := strings.Split(ip.GetAddress(), "/")
+		prefix := addressSlice[0]
+		plen, err := strconv.Atoi(addressSlice[1])
 		if err != nil {
-			log.Error("couldn't parse address: %v", err)
+			log.Error("couldn't convert plen: %v", err)
 		}
-		gateway, _, err := net.ParseCIDR(ip.GetGateway())
-		if err != nil {
-			log.Error("couldn't parse gateway: %v", err)
-		}
+		mask := net.CIDRMask(plen, 32)
+		address := net.IPNet{IP: net.ParseIP(prefix), Mask: mask}
+		gateway := net.ParseIP(ip.GetGateway())
+
 		resultIP := &current.IPConfig{
 			Version:   ip.GetVersion(),
 			Interface: &intf,
-			Address:   *address,
+			Address:   address,
 			Gateway:   gateway,
 		}
 		IPList = append(IPList, resultIP)
@@ -128,13 +112,13 @@ func cniResult(addResult *pb.AddResult) *current.Result {
 		if err != nil {
 			log.Error("couldn't parse dst: %v", err)
 		}
-		gw, _, err := net.ParseCIDR(route.GetGW())
+		gateway := net.ParseIP(route.GetGW())
 		if err != nil {
-			log.Error("couldn't parse gw: %v", err)
+			log.Error("couldn't parse gateway: %v", err)
 		}
 		resultRoute := &types.Route{
 			Dst: *dst,
-			GW:  gw,
+			GW:  gateway,
 		}
 		routeList = append(routeList, resultRoute)
 	}
