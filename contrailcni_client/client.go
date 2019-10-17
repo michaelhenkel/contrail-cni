@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -17,20 +19,39 @@ import (
 	"google.golang.org/grpc"
 )
 
-const (
-	address     = "localhost:10000"
-	defaultName = "world"
-)
-
 func main() {
 	log.Init("/var/log/contrail/cni/client.log", 10, 5)
+	log.Info("Client run")
 	skel.PluginMain(CmdAdd, CmdCheck, CmdDel, cniSpecVersion.All, "contrail")
+}
+
+type CNIConfiguration struct {
+	CNIVersion string      `json:"cniVersion"`
+	Contrail   CNIContrail `json:"contrail"`
+	Name       string      `json:"name"`
+	Type       string      `json:"type"`
+}
+
+type CNIContrail struct {
+	VrouterIP     string `json:"vrouter-ip"`
+	VrouterPort   int    `json:"vrouter-port"`
+	ConfigDir     string `json:"config-dir"`
+	PollTimeout   int    `json:"poll-timeout"`
+	PollRetries   int    `json:"poll-retries"`
+	LogFile       string `json:"log-file"`
+	LogLevel      string `json:"log-level"`
+	CNISocketPath string `json:"cnisocket-path"`
 }
 
 //CmdAdd command calls the Add function
 func CmdAdd(skelArgs *skel.CmdArgs) error {
-
-	c, ctx, conn, cancel := newClient()
+	stdinData := string(skelArgs.StdinData)
+	contrailCNIConfig := &CNIConfiguration{}
+	err := json.Unmarshal([]byte(stdinData), contrailCNIConfig)
+	if err != nil {
+		log.Error("could not serialize json: %v", err)
+	}
+	c, ctx, conn, cancel := newClient(contrailCNIConfig.Contrail.CNISocketPath)
 	defer conn.Close()
 	defer cancel()
 
@@ -51,19 +72,39 @@ func CmdCheck(skelArgs *skel.CmdArgs) error {
 
 //CmdDel command calls the Del function
 func CmdDel(skelArgs *skel.CmdArgs) error {
-	c, ctx, conn, cancel := newClient()
+	stdinData := string(skelArgs.StdinData)
+	contrailCNIConfig := &CNIConfiguration{}
+	err := json.Unmarshal([]byte(stdinData), contrailCNIConfig)
+	if err != nil {
+		log.Error("could not serialize json: %v", err)
+	}
+	log.Info("stdinData %+v\n", contrailCNIConfig)
+	c, ctx, conn, cancel := newClient(contrailCNIConfig.Contrail.CNISocketPath)
 	defer conn.Close()
 	defer cancel()
 
-	_, err := c.Del(ctx, cniArgs(skelArgs))
+	_, err = c.Del(ctx, cniArgs(skelArgs))
 	if err != nil {
 		log.Error("could not add: %v", err)
 	}
 	return nil
 }
 
-func newClient() (pb.ContrailCNIClient, context.Context, *grpc.ClientConn, context.CancelFunc) {
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
+func unixConnect(addr string, t time.Duration) (net.Conn, error) {
+	unixAddr, err := net.ResolveUnixAddr("unix", addr)
+	conn, err := net.DialUnix("unix", nil, unixAddr)
+	return conn, err
+}
+
+func newClient(socket string) (pb.ContrailCNIClient, context.Context, *grpc.ClientConn, context.CancelFunc) {
+	if socket == "" {
+		socket = "/var/run/contrail/cni.socket"
+	}
+	if _, err := os.Stat(socket); os.IsNotExist(err) {
+		log.Error("socket %s doesn't exist, server running?", socket)
+	}
+	log.Info("Dialing socket %s", socket)
+	conn, err := grpc.Dial(socket, grpc.WithInsecure(), grpc.WithDialer(unixConnect))
 	if err != nil {
 		log.Error("did not connect: %v", err)
 	}

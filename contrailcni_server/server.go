@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 
 	//"github.com/golang/protobuf/proto"
@@ -21,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -70,35 +73,6 @@ func getCNI(ctx context.Context, in *pb.CNIArgs) (*contrailCni.ContrailCni, erro
 
 // Add implements contrailcno.ContrailCNIServer
 func (s *server) Add(ctx context.Context, in *pb.CNIArgs) (*pb.AddResult, error) {
-	/*
-		skelArgs := getSkelArgs(in)
-		addResult := &pb.AddResult{}
-		cni, err := contrailCni.Init(skelArgs)
-		if err != nil {
-			return addResult, err
-		}
-
-		argsList := strings.Split(skelArgs.Args, ";")
-		var argMap = make(map[string]string)
-		for _, arg := range argsList {
-			argKV := strings.Split(arg, "=")
-			argMap[argKV[0]] = argKV[1]
-		}
-		containerName := argMap["K8S_POD_NAME"]
-		log.Info("containerName %s", containerName)
-		uid, err := getPodIDFromKubeAPI(containerName, argMap["K8S_POD_NAMESPACE"])
-		if err != nil {
-			log.Error("couldn't get uid from kube %s\n", err)
-		}
-		containerUID := fmt.Sprintf("%s", uid)
-		if err != nil {
-			log.Errorf("Error getting UUID/Name for Container")
-			return addResult, err
-		}
-		log.Infof("updating cni with uuid %s name %s", containerUID, containerName)
-		cni.Update(containerName, containerUID, "")
-		cni.Log()
-	*/
 	addResult := &pb.AddResult{}
 	cni, err := getCNI(ctx, in)
 	if err != nil {
@@ -189,12 +163,28 @@ func resultToProto(result *current.Result, cniVersion string) *pb.AddResult {
 	}
 	return addResult
 }
+func getFlag() (socket, kubeconfig *string, incluster *bool) {
+	socket = flag.String("socketpath", "/var/run/contrail/cni.socket", "absolute path to unix socket")
+	incluster = flag.Bool("incluster", true, "incluster authentication")
+	kubeconfig = flag.String("kubeconfig", "/etc/rancher/k3s/k3s.yaml", "absolut path to kubeconfig, only needed if incluster is false")
+	flag.Parse()
+	fmt.Printf("flags2: incluster: %t, kubeconfig: %s, socket: %s", *incluster, *kubeconfig, *socket)
+	return socket, kubeconfig, incluster
+}
+
+var socket, kubeconfig, incluster = getFlag()
 
 func main() {
+
 	fmt.Println("Serving...")
 	log.Init("/var/log/contrail/cni/server.log", 10, 5)
 	log.Info("Started serving")
-	lis, err := net.Listen("tcp", port)
+	fmt.Printf("flags: incluster: %t, kubeconfig: %s, socket: %s", *incluster, *kubeconfig, *socket)
+	if _, err := os.Stat(*socket); err == nil {
+		log.Info("socket exists, removing it")
+		err = os.Remove(*socket)
+	}
+	lis, err := net.Listen("unix", *socket)
 	if err != nil {
 		log.Error("failed to listen: %v", err)
 	}
@@ -206,15 +196,23 @@ func main() {
 }
 
 func getPodIDFromKubeAPI(podName string, podNamespace string) (types.UID, error) {
-	log.Info("getPodIDFromKubeAPI\n")
+	log.Info("getPodIDFromKubeAPI")
 	var uid types.UID
-	kubeconfig := "/etc/rancher/k3s/k3s.yaml"
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+
+	// creates the clientset
+	fmt.Printf("flags3: incluster: %t, kubeconfig: %s, socket: %s", *incluster, *kubeconfig, *socket)
+	clientset := &kubernetes.Clientset{}
+	var err error
+	config := &rest.Config{}
+	if *incluster {
+		config, err = rest.InClusterConfig()
+	} else {
+		config, err = clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	}
 	if err != nil {
-		log.Error("cannot load kube config\n")
 		return uid, err
 	}
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err = kubernetes.NewForConfig(config)
 	if err != nil {
 		log.Error("cannot create clientset\n")
 		return uid, err
