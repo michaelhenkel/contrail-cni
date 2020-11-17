@@ -42,6 +42,7 @@ type VRouter struct {
 	PollRetries   int    `json:"poll-retries"`
 	containerId   string
 	containerUuid string
+	vmUID         string
 	containerVn   string
 	VmiUuid       string
 	httpClient    *http.Client
@@ -53,7 +54,7 @@ type vrouterJson struct {
 
 // Make filename to store config
 func (vrouter *VRouter) makeFileName(VmiUUID string) string {
-	fname := vrouter.Dir + "/" + vrouter.containerUuid
+	fname := vrouter.Dir + "/" + vrouter.vmUID
 	if VmiUUID != "" {
 		fname = fname + "/" + VmiUUID
 	}
@@ -66,7 +67,7 @@ func (vrouter *VRouter) makeUrl(containerUuid, containerVn,
 	page string) string {
 	url := "http://" + vrouter.Server + ":" + strconv.Itoa(vrouter.Port) + page
 	if len(containerUuid) > 0 {
-		url = url + "/" + vrouter.containerUuid
+		url = url + "/" + containerUuid
 	}
 
 	return url
@@ -169,7 +170,7 @@ func MakeCniResult(ifname string, vrouterResult *Result) *current.Result {
 // Get operation from VRouter
 func (vrouter *VRouter) Get(url string) (*[]Result, error) {
 	var req []byte
-	resp, err := vrouter.doOp("GET", vrouter.containerUuid,
+	resp, err := vrouter.doOp("GET", vrouter.vmUID,
 		vrouter.containerVn, url, req)
 	if err != nil {
 		log.Errorf("Failed HTTP GET operation")
@@ -283,7 +284,7 @@ func makeMsg(containerName, containerUuid, containerId, containerNamespace,
  */
 func (vrouter *VRouter) addVmFile(addMsg []byte, vmiUuid string) error {
 	// Check if path to directory exists exists, else create directory
-	path := vrouter.Dir + "/" + vrouter.containerUuid
+	path := vrouter.Dir + "/" + vrouter.vmUID
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err := os.Mkdir(path, 0644); err != nil {
 			log.Errorf("Error creating VM directory %s. Error : %s", path, err)
@@ -324,14 +325,15 @@ func (vrouter *VRouter) addVmToAgent(addMsg []byte) error {
 /* Process add of a VM. Writes config file and send message to agent */
 func (vrouter *VRouter) Add(containerName, containerUuid, containerVn,
 	containerId, containerNamespace, containerIfName,
-	hostIfName, vmiUuid string, updateAgent bool) error {
+	hostIfName, vmiUuid, vmUID string, updateAgent bool) error {
 	vrouter.containerUuid = containerUuid
 	vrouter.containerId = containerId
 	vrouter.containerVn = containerVn
 	vrouter.VmiUuid = vmiUuid
+	vrouter.vmUID = vmUID
 
 	// Make Add Message structure
-	addMsg := makeMsg(containerName, containerUuid, containerId,
+	addMsg := makeMsg(containerName, vmUID, containerId,
 		containerNamespace, containerIfName, hostIfName, vmiUuid, containerVn)
 	log.Infof("VRouter add message is %s", addMsg)
 
@@ -380,7 +382,7 @@ func (vrouter *VRouter) delVmFile(containerIfName string) (error, error) {
 func (vrouter *VRouter) delVmToAgent() error {
 	delMsg := makeMsg("", vrouter.containerUuid, vrouter.containerId,
 		"", "", "", "", "")
-	resp, err := vrouter.doOp("DELETE", vrouter.containerUuid,
+	resp, err := vrouter.doOp("DELETE", vrouter.vmUID,
 		vrouter.containerVn, "/vm", delMsg)
 	if err != nil {
 		log.Errorf("Failed HTTP DELETE operation")
@@ -403,12 +405,13 @@ func (vrouter *VRouter) delVmToAgent() error {
  * effort cleanup
  */
 func (vrouter *VRouter) Del(containerId, containerUuid,
-	containerVn string, updateAgent bool, vmiUuids []string) error {
+	containerVn, vmUID string, updateAgent bool, vmiUuids []string) error {
 	log.Infof("Deleting container with id : %s uuid : %s Vn : %s",
 		containerId, containerUuid, containerVn)
 	vrouter.containerUuid = containerUuid
 	vrouter.containerId = containerId
 	vrouter.containerVn = containerVn
+	vrouter.vmUID = vmUID
 	var ret error
 	for _, vmiUuid := range vmiUuids {
 		// Remove the configuraion file stored for persistency
@@ -444,10 +447,11 @@ func (vrouter *VRouter) Del(containerId, containerUuid,
  * they do not match
  */
 func (vrouter *VRouter) CanDelete(containerId, containerUuid,
-	containerVn string) ([]string, []string, error) {
+	containerVn, vmUID string) ([]string, []string, error) {
 	vrouter.containerUuid = containerUuid
 	vrouter.containerId = containerId
 	vrouter.containerVn = containerVn
+	vrouter.vmUID = vmUID
 
 	var containerIntfNames []string
 	var vmiUuids []string
@@ -490,16 +494,17 @@ func (vrouter *VRouter) CanDelete(containerId, containerUuid,
 /****************************************************************************
  * POLL handling
  ****************************************************************************/
-func (vrouter *VRouter) Poll(containerUuid, containerVn string) (*[]Result,
+func (vrouter *VRouter) Poll(containerUuid, containerVn, vmUID string) (*[]Result,
 	error) {
 	vrouter.containerUuid = containerUuid
 	vrouter.containerVn = containerVn
+	vrouter.vmUID = vmUID
 	var msg string
 
 	// Loop till we receive all the interfaces attached to the pod
 	// in the Vrouter Response.
 	for i := 0; i < vrouter.PollRetries; i++ {
-		results, poll_err := vrouter.PollUrl("/vm-cfg")
+		results, poll_err := vrouter.PollUrl("/vm-cfg-by-uuid")
 		if poll_err != nil {
 			msg = poll_err.Error()
 			break
@@ -542,7 +547,7 @@ func VRouterInit(stdinData []byte) (*VRouter, error) {
 	vrouter := VRouter{Server: VROUTER_AGENT_IP, Port: VROUTER_AGENT_PORT,
 		Dir: VROUTER_CONFIG_DIR, PollTimeout: VROUTER_POLL_TIMEOUT,
 		PollRetries: VROUTER_POLL_RETRIES, containerId: "", containerUuid: "",
-		containerVn: "", VmiUuid: "", httpClient: httpClient}
+		containerVn: "", vmUID: "", VmiUuid: "", httpClient: httpClient}
 	args := vrouterJson{VRouter: vrouter}
 
 	if err := json.Unmarshal(stdinData, &args); err != nil {

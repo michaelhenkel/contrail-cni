@@ -21,7 +21,6 @@ import (
 	log "github.com/michaelhenkel/contrail-cni/logging"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -33,6 +32,7 @@ import (
 
 const (
 	port = ":10000"
+	vmUIDAnnotation = "kube-manager.juniper.net/vm-uuid"
 )
 
 // server is used to implement contrailcni.ContrailCNIServer.
@@ -54,18 +54,13 @@ func getCNI(ctx context.Context, in *pb.CNIArgs) (*contrailCni.ContrailCni, erro
 		argMap[argKV[0]] = argKV[1]
 	}
 	containerName := argMap["K8S_POD_NAME"]
-	log.Info("containerName %s", containerName)
-	uid, err := getPodIDFromKubeAPI(containerName, argMap["K8S_POD_NAMESPACE"])
+	containerUID, vmUID, err := getPodIDFromKubeAPI(containerName, argMap["K8S_POD_NAMESPACE"])
 	if err != nil {
-		log.Error("couldn't get uid from kube %s\n", err)
-	}
-	containerUID := fmt.Sprintf("%s", uid)
-	if err != nil {
-		log.Errorf("Error getting UUID/Name for Container")
 		return cni, err
 	}
-	log.Infof("updating cni with uuid %s name %s", containerUID, containerName)
-	cni.Update(containerName, containerUID, "")
+
+	log.Infof("updating cni with container uuid %s and name %s and contrail virtual-machine uuid %s", containerUID, containerName, vmUID)
+	cni.Update(containerName, containerUID, "", vmUID)
 	cni.Log()
 	return cni, nil
 
@@ -76,10 +71,10 @@ func (s *server) Add(ctx context.Context, in *pb.CNIArgs) (*pb.AddResult, error)
 	addResult := &pb.AddResult{}
 	cni, err := getCNI(ctx, in)
 	if err != nil {
-		log.Errorf("Failed getting cni.")
+		log.Errorf("Failed getting cni: %v", err)
 		return addResult, err
 	}
-	log.Infof("Came in Add for cni.ContainerUuid %s", cni.ContainerUuid)
+	log.Infof("Came in Add for cni %+v", cni)
 	// Handle Add command
 	result, cniVersion, err := cni.CmdAdd()
 	if err != nil {
@@ -98,11 +93,11 @@ func (s *server) Del(ctx context.Context, in *pb.CNIArgs) (*pb.DelResult, error)
 		log.Errorf("Failed getting cni.")
 		return delResult, err
 	}
-	log.Infof("Came in Add for cni.ContainerUuid %s", cni.ContainerUuid)
+	log.Infof("Came in Delete for cni: %+v", cni)
 	// Handle Del command
 	err = cni.CmdDel()
 	if err != nil {
-		log.Errorf("Failed processing Add command.")
+		log.Errorf("Failed processing Delete command.")
 		return delResult, err
 	}
 	return delResult, nil
@@ -168,7 +163,7 @@ func getFlag() (socket, kubeconfig *string, incluster *bool) {
 	incluster = flag.Bool("incluster", true, "incluster authentication")
 	kubeconfig = flag.String("kubeconfig", "/etc/rancher/k3s/k3s.yaml", "absolut path to kubeconfig, only needed if incluster is false")
 	flag.Parse()
-	fmt.Printf("flags2: incluster: %t, kubeconfig: %s, socket: %s", *incluster, *kubeconfig, *socket)
+	fmt.Printf("flags: incluster: %t, kubeconfig: %s, socket: %s\n", *incluster, *kubeconfig, *socket)
 	return socket, kubeconfig, incluster
 }
 
@@ -179,7 +174,6 @@ func main() {
 	fmt.Println("Serving...")
 	log.Init("/var/log/contrail/cni/server.log", 10, 5)
 	log.Info("Started serving")
-	fmt.Printf("flags: incluster: %t, kubeconfig: %s, socket: %s", *incluster, *kubeconfig, *socket)
 	if _, err := os.Stat(*socket); err == nil {
 		log.Info("socket exists, removing it")
 		err = os.Remove(*socket)
@@ -195,12 +189,8 @@ func main() {
 	}
 }
 
-func getPodIDFromKubeAPI(podName string, podNamespace string) (types.UID, error) {
-	log.Info("getPodIDFromKubeAPI")
-	var uid types.UID
-
+func getPodIDFromKubeAPI(podName string, podNamespace string) (string, string, error) {
 	// creates the clientset
-	fmt.Printf("flags3: incluster: %t, kubeconfig: %s, socket: %s", *incluster, *kubeconfig, *socket)
 	clientset := &kubernetes.Clientset{}
 	var err error
 	config := &rest.Config{}
@@ -210,27 +200,29 @@ func getPodIDFromKubeAPI(podName string, podNamespace string) (types.UID, error)
 		config, err = clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	}
 	if err != nil {
-		return uid, err
+		return "", "", err
 	}
 	clientset, err = kubernetes.NewForConfig(config)
 	if err != nil {
 		log.Error("cannot create clientset\n")
-		return uid, err
+		return "", "", err
 	}
 	pod, err := clientset.CoreV1().Pods(podNamespace).Get(podName, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
 		log.Error("Pod %s in namespace %s not found\n", podName, podNamespace)
-		return uid, err
+		return "", "", err
 	} else if err != nil {
 		log.Error("Error getting pod %s in namespace %s\n", podName, podNamespace)
-		return uid, err
+		return "", "", err
 	}
 
-	log.Info("Found pod %s in namespace %s\n", podName, podNamespace)
 
-	uid = pod.GetUID()
-
-	return uid, nil
+	vmUID, found := pod.GetAnnotations()[vmUIDAnnotation]
+	if !found {
+		return "", "", fmt.Errorf("cannot determine Contrail VM UUID from the Pod")
+	}
+	log.Info("Found pod %s in namespace %s for VM %s\n", podName, podNamespace, vmUID)
+	return string(pod.GetUID()), vmUID, nil
 }
 
 func getSkelArgs(cniArgs *pb.CNIArgs) *skel.CmdArgs {

@@ -104,7 +104,7 @@ func CmdAdd(skelArgs *skel.CmdArgs) error {
 		return err
 	}
 	log.Infof("updating cni with uuid %s name %s", containerUID, containerName)
-	cni.Update(containerName, containerUID, "")
+	cni.Update(containerName, containerUID, "", "")
 	cni.Log()
 	log.Infof("Came in Add for cni.ContainerUuid %s", cni.ContainerUuid)
 
@@ -143,7 +143,7 @@ func CmdDel(skelArgs *skel.CmdArgs) error {
 	containerUID := fmt.Sprintf("%s", uid)
 
 	// Update UUID and Name for container
-	cni.Update(containerName, containerUID, "")
+	cni.Update(containerName, containerUID, "", "")
 	cni.Log()
 
 	// Handle Del command

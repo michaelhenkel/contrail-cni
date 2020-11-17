@@ -64,22 +64,23 @@ const CONTRAIL_PARENT_INTERFACE = "eth0"
 
 // Definition of Logging arguments in form of json in STDIN
 type ContrailCni struct {
-	cniArgs       *skel.CmdArgs
-	Mode          string `json:"mode"`
-	VifType       string `json:"vif-type"`
-	VifParent     string `json:"parent-interface"`
-	LogDir        string `json:"log-dir"`
-	LogFile       string `json:"log-file"`
-	LogLevel      string `json:"log-level"`
-	Mtu           int    `json:"mtu"`
-	MetaPlugin    bool   `json:"meta-plugin"`
-	NetworkName   string `json:"network-name"`
-	ContainerUuid string
-	ContainerName string
-	ContainerVn   string
-	MesosIP       string `json:"mesos-ip"`
-	MesosPort     string `json:"mesos-port"`
-	VRouter       VRouter
+	cniArgs           *skel.CmdArgs
+	Mode              string `json:"mode"`
+	VifType           string `json:"vif-type"`
+	VifParent         string `json:"parent-interface"`
+	LogDir            string `json:"log-dir"`
+	LogFile           string `json:"log-file"`
+	LogLevel          string `json:"log-level"`
+	Mtu               int    `json:"mtu"`
+	MetaPlugin        bool   `json:"meta-plugin"`
+	NetworkName       string `json:"network-name"`
+	ContainerUuid     string
+	ContainerName     string
+	ContainerVn       string
+	VirtualMachineUID string
+	MesosIP           string `json:"mesos-ip"`
+	MesosPort         string `json:"mesos-port"`
+	VRouter           VRouter
 }
 
 type cniJson struct {
@@ -137,12 +138,14 @@ func Init(args *skel.CmdArgs) (*ContrailCni, error) {
 }
 
 func (cni *ContrailCni) Update(containerName, containerUuid,
-	containerVn string) {
+	containerVn string, VirtualMachineUID string) {
 	log.Infof("got cni update request with uuid %s name %s vn %s", containerUuid, containerName, containerVn)
 	cni.ContainerUuid = containerUuid
 	cni.ContainerName = containerName
 	cni.ContainerVn = containerVn
-	log.Infof("processed cni update request with uuid %s name %s vn %s", cni.ContainerUuid, cni.ContainerName, containerVn)
+	cni.VirtualMachineUID = VirtualMachineUID
+	log.Infof("processed cni update request with uuid %s name %s vn %s vm %s",
+		cni.ContainerUuid, cni.ContainerName, cni.ContainerVn, cni.VirtualMachineUID)
 
 }
 
@@ -207,7 +210,8 @@ func (cni *ContrailCni) createInterfaceAndUpdateVrouter(
 
 	err = cni.VRouter.Add(cni.ContainerName, cni.ContainerUuid,
 		result.VnId, cni.cniArgs.ContainerID, cni.cniArgs.Netns,
-		containerIntfName, intf.GetHostIfName(), result.VmiUuid, updateAgent)
+		containerIntfName, intf.GetHostIfName(), result.VmiUuid,
+		cni.VirtualMachineUID, updateAgent)
 	if err != nil {
 		log.Errorf("Error in Add to VRouter. Error %+v", err)
 		return err
@@ -297,7 +301,7 @@ func (cni *ContrailCni) CmdAdd() (*current.Result, string, error) {
 	// Pre-fetch initial configuration for the interfaces from vrouter
 	// This will give MAC address for the interface and in case of
 	// VMI sub-interface, we will also get the vlan-tag
-	results, err := cni.VRouter.Poll(cni.ContainerUuid, cni.ContainerVn)
+	results, err := cni.VRouter.Poll(cni.ContainerUuid, cni.ContainerVn, cni.VirtualMachineUID)
 	if err != nil {
 		log.Errorf("Error polling for configuration of %s and %s",
 			cni.ContainerUuid, cni.ContainerVn)
@@ -432,7 +436,8 @@ func (cni *ContrailCni) CmdDel() error {
 	}
 
 	containerIntfNames, vmiUuids, err := cni.VRouter.CanDelete(
-		cni.cniArgs.ContainerID, cni.ContainerUuid, cni.ContainerVn)
+		cni.cniArgs.ContainerID, cni.ContainerUuid, cni.ContainerVn,
+        cni.VirtualMachineUID)
 	if err != nil {
 		log.Errorf("Failed in CanDelete. Error %s", err)
 		return nil
@@ -460,7 +465,7 @@ func (cni *ContrailCni) CmdDel() error {
 		}
 
 		err = cni.VRouter.Del(cni.cniArgs.ContainerID, cni.ContainerUuid,
-			cni.ContainerVn, updateAgent, vmiUuids)
+			cni.ContainerVn, cni.VirtualMachineUID, updateAgent, vmiUuids)
 		if err != nil {
 			log.Errorf("Error deleting interface from agent")
 		}
