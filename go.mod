@@ -7,7 +7,7 @@ replace github.com/docker/distribution v2.7.1+incompatible => github.com/docker/
 require (
 	github.com/containernetworking/cni v0.7.1
 	github.com/containernetworking/plugins v0.8.2
-	github.com/gogo/protobuf v1.3.0 // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.3.2
 	github.com/imdario/mergo v0.3.8 // indirect
 	github.com/natefinch/lumberjack v2.0.0+incompatible
